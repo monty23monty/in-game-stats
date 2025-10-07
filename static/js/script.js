@@ -68,7 +68,7 @@ async function SetPlayers() {
     const selectedTeamId = teamSelect.value;
     console.log(selectedTeamId);
 
-    const teamStatus = await checkIfHomeTeam(gameId, selectedTeamId);
+    const teamStatus = await checkIfHomeTeam(selectedTeamId, gameId);
 
     if (!teamStatus) {
         return;
