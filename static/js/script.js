@@ -2,6 +2,43 @@ const teamSelect = document.getElementById("team-select");
 const gameId = document.querySelector('meta[name="game_id"]').getAttribute('content');
 console.log("Game ID:", gameId);
 let seasonStats = false;
+const statSelects = Array.from(document.querySelectorAll('.stat-select'));
+
+async function fetchStatOptions() {
+    const url = 'http://localhost:5000/player/stats-options';
+    try {
+        const response = await fetch(url);
+        if (!response.ok) {
+            console.error('Failed to fetch stat options:', response.statusText);
+            return;
+        }
+
+        const data = await response.json();
+        const stats = data.stats || [];
+        populateStatSelects(stats);
+    } catch (error) {
+        console.error('Error fetching stat options:', error);
+    }
+}
+
+function populateStatSelects(stats) {
+    statSelects.forEach((select) => {
+        select.innerHTML = '';
+        const placeholderOption = document.createElement('option');
+        placeholderOption.value = '';
+        placeholderOption.textContent = 'Select a stat';
+        select.appendChild(placeholderOption);
+
+        stats.forEach((stat) => {
+            const option = document.createElement('option');
+            option.value = stat;
+            option.textContent = stat;
+            select.appendChild(option);
+        });
+    });
+}
+
+fetchStatOptions();
 
 
 //teamSelect.addEventListener("change", SetPlayers())
@@ -140,8 +177,20 @@ const sendButton = document.getElementById("player-send-button")
 sendButton.addEventListener("click", function(e){
     let playerNumber = playerSelect.options[playerSelect.selectedIndex].value;
     let teamId = teamSelect.options[teamSelect.selectedIndex].value;
+    const selectedStats = statSelects
+        .map((select) => select.value)
+        .filter((value) => value !== '');
 
-    const url = `http://127.0.0.1:5000/output/player?team_id=${teamId}&player_number=${playerNumber}&game_id=${gameId}&season_stats=${seasonStats}`
+    const params = new URLSearchParams({
+        team_id: teamId,
+        player_number: playerNumber,
+        game_id: gameId,
+        season_stats: seasonStats
+    });
+
+    selectedStats.forEach((stat) => params.append('stats', stat));
+
+    const url = `http://127.0.0.1:5000/output/player?${params.toString()}`
 
     fetch(url, {
     method: "POST",

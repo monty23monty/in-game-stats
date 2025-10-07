@@ -12,6 +12,21 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
+PLAYER_STAT_TITLES = [
+    "Games Played",
+    "Goals",
+    "Assists",
+    "Points",
+    "PIM",
+    "Position"
+]
+
+
+@app.route('/player/stats-options')
+def player_stat_options():
+    """Return a list of player stat titles that can be selected."""
+    return jsonify({"stats": PLAYER_STAT_TITLES})
+
 @app.route('/')
 def hello_world():  # put application's code here
     return 'Hello World!'
@@ -367,6 +382,24 @@ def output():
 
 
         print(player_stats)
+
+        if player_stats is None:
+            return jsonify({"error": "Unable to fetch player stats"}), 500
+
+        selected_stats = request.args.getlist('stats')
+        if selected_stats:
+            base_fields = ["First Name", "Last Name", "Player Number"]
+            filtered_stats = {}
+            for key in base_fields:
+                if key in player_stats:
+                    filtered_stats[key] = player_stats[key]
+
+            for stat in selected_stats:
+                if stat in player_stats:
+                    filtered_stats[stat] = player_stats[stat]
+
+            if filtered_stats:
+                player_stats = filtered_stats
 
         writer = csv.DictWriter(output, fieldnames=player_stats.keys())
 
