@@ -9,8 +9,18 @@ import bs4
 import json
 from flask_cors import CORS
 
+from database import (
+    cache_game_stats,
+    cache_season_stats,
+    get_cached_game_stats,
+    get_cached_season_stats,
+    init_db,
+)
+
 app = Flask(__name__)
 CORS(app)
+
+init_db()
 
 def resolve_player_stats(team_id, player_number, season_stats_flag, game_id=None):
     """Fetch player stats based on the requested context."""
@@ -95,9 +105,16 @@ def team_stats(team_id):
 
 @app.route('/players/<team_id>/stats/<player_number>')
 def single_player_stats(team_id, player_number):
+    cached_stats = get_cached_season_stats(team_id, player_number)
+    if cached_stats:
+        return cached_stats
+
     try:
         # Fetch the page content
         rows = fetch_players_page(team_id)
+
+        if isinstance(rows, tuple):
+            return rows
 
         for row in rows:
             cols = row.find_all('td')
@@ -106,7 +123,7 @@ def single_player_stats(team_id, player_number):
 
             current_player_number = cols[0].text.strip().lstrip("#")  # Remove '#' from the number
             if current_player_number == player_number:
-                return {
+                player_stats = {
                     "Player Number": current_player_number,
                     "First Name": cols[1].text.split()[0].strip(),
                     "Last Name": " ".join(cols[1].text.split()[1:]).strip(),
@@ -121,6 +138,10 @@ def single_player_stats(team_id, player_number):
                     "Color": teamUrlMap[team_id]["color"],
                     "Color-s": teamUrlMap[team_id]["color-s"],
                 }
+
+                cache_season_stats(team_id, player_number, player_stats, teamUrlMap.get(team_id, {}))
+
+                return player_stats
 
         return jsonify({"error": "Player not found."}), 404
 
@@ -361,13 +382,17 @@ def is_home_team():
 
 
 def single_player_stats_game(game_id, team_id, player_number):
+    cached_stats = get_cached_game_stats(team_id, player_number, game_id)
+    if cached_stats:
+        return cached_stats
+
     team_stats = get(f'https://s3-eu-west-1.amazonaws.com/nihl.hokejovyzapis.cz/matches/{game_id}/team-stats/{team_id}.json')
 
     for player in team_stats.json():
         print(player)
         if int(player["jersey"]) == int(player_number):
             print("I got here")
-            return {
+            player_stats = {
                 "First Name": player["firstname"],
                 "Last Name": player["surname"],
                 "Player Number": str(player["jersey"]),
@@ -382,6 +407,10 @@ def single_player_stats_game(game_id, team_id, player_number):
                 "Color-s": teamUrlMap[team_id]["color-s"],
                 "Position": player["position"],
             }
+
+            cache_game_stats(team_id, player_number, game_id, player_stats, teamUrlMap.get(team_id, {}))
+
+            return player_stats
 
 @app.route('/output/player', methods=['GET', 'POST'])
 def output():
