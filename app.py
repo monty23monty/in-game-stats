@@ -12,6 +12,47 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
+def resolve_player_stats(team_id, player_number, season_stats_flag, game_id=None):
+    """Fetch player stats based on the requested context."""
+    if season_stats_flag:
+        return single_player_stats(team_id, player_number)
+
+    if game_id is None:
+        return None
+
+    return single_player_stats_game(game_id, team_id, player_number)
+
+
+@app.route('/player/stats-options')
+def player_stat_options():
+    """Return a list of available stat titles for a specific player."""
+    team_id = request.args.get('team_id')
+    player_number = request.args.get('player_number')
+    game_id = request.args.get('game_id')
+    season_stats_flag = request.args.get('season_stats', 'false').lower() == 'true'
+
+    if not team_id or not player_number:
+        return jsonify({"error": "Missing team_id or player_number"}), 400
+
+    if not season_stats_flag and not game_id:
+        return jsonify({"error": "Missing game_id for game stats"}), 400
+
+    player_stats = resolve_player_stats(team_id, player_number, season_stats_flag, game_id)
+
+    if isinstance(player_stats, tuple):
+        return player_stats
+
+    if not player_stats:
+        return jsonify({"stats": []})
+
+    base_fields = {"First Name", "Last Name", "Player Number"}
+    meta_fields = {"Logo", "header", "Color", "Color-s"}
+    excluded_fields = base_fields | meta_fields
+
+    stat_titles = sorted([key for key in player_stats.keys() if key not in excluded_fields])
+
+    return jsonify({"stats": stat_titles})
+
 @app.route('/')
 def hello_world():  # put application's code here
     return 'Hello World!'
@@ -355,18 +396,38 @@ def output():
         if player_number is None:
             return jsonify({"error": "Missing player_number"}), 400
 
-        season_stats = request.args.get('season_stats')
+        season_stats_flag = request.args.get('season_stats', 'false').lower() == 'true'
         game_id = request.args.get('game_id')
-        print(season_stats)
+        print(season_stats_flag)
         print(game_id)
-        if season_stats == 'true':
-            player_stats = single_player_stats(team_id, player_number)
-        else:
-            player_stats = single_player_stats_game(game_id, team_id, player_number)
-            print('Debug')
 
+        if not season_stats_flag and game_id is None:
+            return jsonify({"error": "Missing game_id for game stats"}), 400
+
+        player_stats = resolve_player_stats(team_id, player_number, season_stats_flag, game_id)
 
         print(player_stats)
+
+        if isinstance(player_stats, tuple):
+            return player_stats
+
+        if player_stats is None:
+            return jsonify({"error": "Unable to fetch player stats"}), 500
+
+        selected_stats = request.args.getlist('stats')
+        if selected_stats:
+            base_fields = ["First Name", "Last Name", "Player Number"]
+            filtered_stats = {}
+            for key in base_fields:
+                if key in player_stats:
+                    filtered_stats[key] = player_stats[key]
+
+            for stat in selected_stats:
+                if stat in player_stats:
+                    filtered_stats[stat] = player_stats[stat]
+
+            if filtered_stats:
+                player_stats = filtered_stats
 
         writer = csv.DictWriter(output, fieldnames=player_stats.keys())
 
