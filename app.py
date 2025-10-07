@@ -9,18 +9,21 @@ import bs4
 import json
 from flask_cors import CORS
 
-from database import (
-    cache_game_stats,
-    cache_season_stats,
-    get_cached_game_stats,
-    get_cached_season_stats,
-    init_db,
-)
+from database import cache_stat_titles, get_cached_stat_titles, init_db
 
 app = Flask(__name__)
 CORS(app)
 
 init_db()
+
+BASE_FIELDS = {"First Name", "Last Name", "Player Number"}
+META_FIELDS = {"Logo", "header", "Color", "Color-s"}
+
+
+def extract_stat_titles(player_stats):
+    excluded_fields = BASE_FIELDS | META_FIELDS
+    return sorted([key for key in player_stats.keys() if key not in excluded_fields])
+
 
 def resolve_player_stats(team_id, player_number, season_stats_flag, game_id=None):
     """Fetch player stats based on the requested context."""
@@ -40,12 +43,17 @@ def player_stat_options():
     player_number = request.args.get('player_number')
     game_id = request.args.get('game_id')
     season_stats_flag = request.args.get('season_stats', 'false').lower() == 'true'
+    context = 'season' if season_stats_flag else 'game'
 
     if not team_id or not player_number:
         return jsonify({"error": "Missing team_id or player_number"}), 400
 
     if not season_stats_flag and not game_id:
         return jsonify({"error": "Missing game_id for game stats"}), 400
+
+    cached_titles = get_cached_stat_titles(team_id, player_number, context)
+    if cached_titles:
+        return jsonify({"stats": cached_titles["stat_titles"]})
 
     player_stats = resolve_player_stats(team_id, player_number, season_stats_flag, game_id)
 
@@ -55,11 +63,7 @@ def player_stat_options():
     if not player_stats:
         return jsonify({"stats": []})
 
-    base_fields = {"First Name", "Last Name", "Player Number"}
-    meta_fields = {"Logo", "header", "Color", "Color-s"}
-    excluded_fields = base_fields | meta_fields
-
-    stat_titles = sorted([key for key in player_stats.keys() if key not in excluded_fields])
+    stat_titles = extract_stat_titles(player_stats)
 
     return jsonify({"stats": stat_titles})
 
@@ -105,10 +109,6 @@ def team_stats(team_id):
 
 @app.route('/players/<team_id>/stats/<player_number>')
 def single_player_stats(team_id, player_number):
-    cached_stats = get_cached_season_stats(team_id, player_number)
-    if cached_stats:
-        return cached_stats
-
     try:
         # Fetch the page content
         rows = fetch_players_page(team_id)
@@ -139,7 +139,20 @@ def single_player_stats(team_id, player_number):
                     "Color-s": teamUrlMap[team_id]["color-s"],
                 }
 
-                cache_season_stats(team_id, player_number, player_stats, teamUrlMap.get(team_id, {}))
+                stat_titles = extract_stat_titles(player_stats)
+                player_meta = {
+                    "first_name": player_stats.get("First Name"),
+                    "last_name": player_stats.get("Last Name"),
+                    "position": player_stats.get("Position"),
+                }
+                cache_stat_titles(
+                    team_id,
+                    player_number,
+                    "season",
+                    stat_titles,
+                    player_meta,
+                    teamUrlMap.get(team_id, {}),
+                )
 
                 return player_stats
 
@@ -382,10 +395,6 @@ def is_home_team():
 
 
 def single_player_stats_game(game_id, team_id, player_number):
-    cached_stats = get_cached_game_stats(team_id, player_number, game_id)
-    if cached_stats:
-        return cached_stats
-
     team_stats = get(f'https://s3-eu-west-1.amazonaws.com/nihl.hokejovyzapis.cz/matches/{game_id}/team-stats/{team_id}.json')
 
     for player in team_stats.json():
@@ -408,7 +417,20 @@ def single_player_stats_game(game_id, team_id, player_number):
                 "Position": player["position"],
             }
 
-            cache_game_stats(team_id, player_number, game_id, player_stats, teamUrlMap.get(team_id, {}))
+            stat_titles = extract_stat_titles(player_stats)
+            player_meta = {
+                "first_name": player_stats.get("First Name"),
+                "last_name": player_stats.get("Last Name"),
+                "position": player_stats.get("Position"),
+            }
+            cache_stat_titles(
+                team_id,
+                player_number,
+                "game",
+                stat_titles,
+                player_meta,
+                teamUrlMap.get(team_id, {}),
+            )
 
             return player_stats
 
