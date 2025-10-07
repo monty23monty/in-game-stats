@@ -9,8 +9,21 @@ import bs4
 import json
 from flask_cors import CORS
 
+from database import cache_stat_titles, get_cached_stat_titles, init_db
+
 app = Flask(__name__)
 CORS(app)
+
+init_db()
+
+BASE_FIELDS = {"First Name", "Last Name", "Player Number"}
+META_FIELDS = {"Logo", "header", "Color", "Color-s"}
+
+
+def extract_stat_titles(player_stats):
+    excluded_fields = BASE_FIELDS | META_FIELDS
+    return sorted([key for key in player_stats.keys() if key not in excluded_fields])
+
 
 def resolve_player_stats(team_id, player_number, season_stats_flag, game_id=None):
     """Fetch player stats based on the requested context."""
@@ -30,12 +43,17 @@ def player_stat_options():
     player_number = request.args.get('player_number')
     game_id = request.args.get('game_id')
     season_stats_flag = request.args.get('season_stats', 'false').lower() == 'true'
+    context = 'season' if season_stats_flag else 'game'
 
     if not team_id or not player_number:
         return jsonify({"error": "Missing team_id or player_number"}), 400
 
     if not season_stats_flag and not game_id:
         return jsonify({"error": "Missing game_id for game stats"}), 400
+
+    cached_titles = get_cached_stat_titles(team_id, player_number, context)
+    if cached_titles:
+        return jsonify({"stats": cached_titles["stat_titles"]})
 
     player_stats = resolve_player_stats(team_id, player_number, season_stats_flag, game_id)
 
@@ -45,11 +63,7 @@ def player_stat_options():
     if not player_stats:
         return jsonify({"stats": []})
 
-    base_fields = {"First Name", "Last Name", "Player Number"}
-    meta_fields = {"Logo", "header", "Color", "Color-s"}
-    excluded_fields = base_fields | meta_fields
-
-    stat_titles = sorted([key for key in player_stats.keys() if key not in excluded_fields])
+    stat_titles = extract_stat_titles(player_stats)
 
     return jsonify({"stats": stat_titles})
 
@@ -99,6 +113,9 @@ def single_player_stats(team_id, player_number):
         # Fetch the page content
         rows = fetch_players_page(team_id)
 
+        if isinstance(rows, tuple):
+            return rows
+
         for row in rows:
             cols = row.find_all('td')
             if len(cols) < 9:  # Ensure there are enough columns
@@ -106,7 +123,7 @@ def single_player_stats(team_id, player_number):
 
             current_player_number = cols[0].text.strip().lstrip("#")  # Remove '#' from the number
             if current_player_number == player_number:
-                return {
+                player_stats = {
                     "Player Number": current_player_number,
                     "First Name": cols[1].text.split()[0].strip(),
                     "Last Name": " ".join(cols[1].text.split()[1:]).strip(),
@@ -121,6 +138,23 @@ def single_player_stats(team_id, player_number):
                     "Color": teamUrlMap[team_id]["color"],
                     "Color-s": teamUrlMap[team_id]["color-s"],
                 }
+
+                stat_titles = extract_stat_titles(player_stats)
+                player_meta = {
+                    "first_name": player_stats.get("First Name"),
+                    "last_name": player_stats.get("Last Name"),
+                    "position": player_stats.get("Position"),
+                }
+                cache_stat_titles(
+                    team_id,
+                    player_number,
+                    "season",
+                    stat_titles,
+                    player_meta,
+                    teamUrlMap.get(team_id, {}),
+                )
+
+                return player_stats
 
         return jsonify({"error": "Player not found."}), 404
 
@@ -367,7 +401,7 @@ def single_player_stats_game(game_id, team_id, player_number):
         print(player)
         if int(player["jersey"]) == int(player_number):
             print("I got here")
-            return {
+            player_stats = {
                 "First Name": player["firstname"],
                 "Last Name": player["surname"],
                 "Player Number": str(player["jersey"]),
@@ -382,6 +416,23 @@ def single_player_stats_game(game_id, team_id, player_number):
                 "Color-s": teamUrlMap[team_id]["color-s"],
                 "Position": player["position"],
             }
+
+            stat_titles = extract_stat_titles(player_stats)
+            player_meta = {
+                "first_name": player_stats.get("First Name"),
+                "last_name": player_stats.get("Last Name"),
+                "position": player_stats.get("Position"),
+            }
+            cache_stat_titles(
+                team_id,
+                player_number,
+                "game",
+                stat_titles,
+                player_meta,
+                teamUrlMap.get(team_id, {}),
+            )
+
+            return player_stats
 
 @app.route('/output/player', methods=['GET', 'POST'])
 def output():
